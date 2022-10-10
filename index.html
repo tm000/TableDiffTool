@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<style>
+		html {
+			font-size: 85%;
+		}
+	</style>
+	<script>
+		const STORAGE_KEY_SNAPSHOTS = 'STORAGE_KEY_SNAPSHOTS';
+		const CHANGE = "\b";
+		const ADD = "\f";
+		const DELETE = "\v";
+
+		const heads = {'contract': ['customer', 'type', 'service', 'contractnum', 'applydate', 'contractstart', 'contractend'],
+						'request': ['reqnum', 'type', 'status', 'contractnum']}
+		const tables = {'contract' : [['CUST0001', '05', 'SVC001', 'CNTRACT01', '2022-10-01', '2022-10-10', '9999-12-31'],
+                                    ['CUST0001', '05', 'SVC051', 'CNTRACT01', '2022-10-01', '2022-10-01', '9999-12-31'],
+                                    ],
+				        'request' :[['REQ00001', '01', '02', 'CNTRACT01']],}
+		const primaryKeys = {'contract': [0,1,2,3],
+							'request': [0],}
+		for (let i = 0; i < 2; i++) {
+			tables['contract'][i][Math.floor(Math.random() * 7)]='abc';
+		}
+		if (Math.floor(Math.random() * 7) < 3) {
+			tables['contract'].push(['CUST0001', '05', 'SVC051', 'CNTRACT01', '2022-10-01', '2022-10-01', '9999-12-31']);
+		}
+		if (Math.floor(Math.random() * 7) < 3) {
+			tables['request'][0][Math.floor(Math.random() * 4)]='abc';
+		}
+		if (Math.floor(Math.random() * 7) < 3) {
+			tables['request'].push(['REQ00001', '01', '02', 'CNTRACT01']);
+		}
+		console.log(tables);
+
+		window.onload = function onload() {
+			if (sessionStorage) {
+				// sessionStorageから比較元データを取得
+				let snapshots = JSON.parse(sessionStorage.getItem(STORAGE_KEY_SNAPSHOTS));
+				if (snapshots) {
+					// スナップショットリスト作成
+					const snapshot = document.getElementsByName("snapshot")[0];
+					let cnt = 0, oldest;
+					for (key in snapshots) {
+						if (!oldest) oldest = key;
+						let option = document.createElement("option");
+						option.value = key;
+						option.text = key;
+						snapshot.add(option);
+						cnt++;
+					}
+					if (cnt > 5) {
+						delete snapshots[oldest];
+						snapshot.children[0].remove();
+					}
+				} else {
+					snapshots = {};
+				}
+				snapshots[new Date().toLocaleString()] = tables;
+				sessionStorage.setItem(STORAGE_KEY_SNAPSHOTS, JSON.stringify(snapshots));
+				document.getElementById("compare").onclick = function onclock(event) {
+					event.preventDefault();
+					const selection = document.getElementsByName("snapshot")[0].value;
+					outputTables(selectSnapShot(snapshots[selection]));
+				}
+			}
+			outputTables(tables);
+		}				
+
+		function outputTables(tables) {
+			let tableHtml = [];
+			for (tbl in tables) {
+				// set header
+				let header = [];
+				for (col of heads[tbl]) {
+					header.push("<th>" + col + "</th>")
+				}
+				// set data
+				let rows = [];
+				for (data of tables[tbl]) {
+					let row = ["<tr>"];
+					for (value of data) {
+						if (value.charAt(0) === CHANGE) {
+							row.push("<td style='background-color: red;'>" + value.substr(1) + "</td>")
+						} else if (value.charAt(0) === ADD) {
+							row.push("<td style='background-color: yellow;'>" + value.substr(1) + "</td>")
+						} else if (value.charAt(0) === DELETE) {
+							row.push("<td style='background-color: gray;'>" + value.substr(1) + "</td>")
+						} else {
+							row.push("<td>" + value + "</td>")
+						}
+					}
+					row.push("</tr>");
+					rows.push(row.join(""));
+				}
+				const html = `
+<table>
+	<caption>${tbl}:</caption>
+	<thead>
+		<tr>${header.join("")}</tr>
+	</thead>
+	<tbody>
+		${rows.join("")}
+	</tbody>
+</table>`;
+				tableHtml.push(html);
+			}
+			const main = document.getElementsByTagName("main")[0]
+			main.innerHTML = tableHtml.join("");
+		}
+
+		function selectSnapShot(oldTables) {
+			// 検索結果と比較元データを合わせたテーブル一覧作成
+			let allTables = new Set();
+			for (tbl in tables) allTables.add(tbl);
+			for (tbl in oldTables) allTables.add(tbl);
+			let output = {};
+			for (tbl of allTables) {
+				output[tbl] = [];
+				// compare rows
+				const newrows = tables[tbl];
+				const oldrows = oldTables[tbl];
+				let i=0, j=0;
+				// 1行取得関数
+				const fetchRow = (rows, idx) => {
+					if (rows == null || rows.length <= idx) return [null, null, idx];
+					let key = [];
+					for (col in primaryKeys[tbl]) key.push(rows[idx][col]);
+					return [key.join(","), rows[idx], ++idx];
+				}
+				[nkey, nrow, i] = fetchRow(newrows, i);
+				[okey, orow, j] = fetchRow(oldrows, j);
+				while (nkey != null || okey != null) {
+					if (!nkey || okey < nkey) {
+						// 比較元データにしか存在しない
+						output[tbl].push(orow.map(col => DELETE + col));
+						[okey, orow, j] = fetchRow(oldrows, j);
+					} else if (!okey || nkey < okey) {
+						// 検索結果にしか存在しない
+						output[tbl].push(nrow.map(col => ADD + col));
+						[nkey, nrow, i] = fetchRow(newrows, i);
+					} else {
+						// 検索結果と比較元データに存在する場合、列毎に変更をチェック
+						output[tbl].push(nrow.map((val, idx, arr) => {
+							if (val != orow[idx]) return CHANGE + val;
+							return val;
+						}));
+						[okey, orow, j] = fetchRow(oldrows, j);
+						[nkey, nrow, i] = fetchRow(newrows, i);
+					}
+				}
+			}
+			return output;
+		}
+	</script>
+</head>
+<body>
+	<nav>
+		<select name="snapshot" size="5">
+		</select>
+		<button id="compare">比較</button>
+	</nav>
+	<main>
+	</main>
+</body>
+</html>
